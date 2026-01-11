@@ -1,4 +1,4 @@
-# TAP Reactor Analysis Tool
+# TAP Reactor Experimental Analysis Tool
 
 <a href="https://tap-exp-analysis-app.streamlit.app" target="_blank" rel="noopener noreferrer">
   <img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Streamlit App" width="250" height="150"/>
