@@ -29,4 +29,10 @@ The application requires Python 3.8+ and the following libraries:
 
 To install dependencies:
 ```bash
-pip install streamlit nptdms pandas numpy plotly openpyxl
+pip install -r requirements.txt
+```
+
+To run the app:
+```bash
+streamlit run TAP_Exp_Analysis.py
+```
