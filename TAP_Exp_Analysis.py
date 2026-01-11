@@ -7,7 +7,7 @@ import io
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="TAP Reactor Analysis",
+    page_title="TAP Reactor Experimental Analysis",
     page_icon="🧪",
     layout="wide"
 )
