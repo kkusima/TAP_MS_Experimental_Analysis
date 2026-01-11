@@ -27,6 +27,7 @@ The application requires Python 3.8+ and the following libraries:
 - `plotly`
 - `openpyxl`
 
+## Installation
 To install dependencies:
 ```bash
 pip install -r requirements.txt
