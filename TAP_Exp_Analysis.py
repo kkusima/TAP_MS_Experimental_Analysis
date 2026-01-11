@@ -65,7 +65,7 @@ def get_t_p(time_vector, response_vector, t_delay=0):
 
 def area_under_curve(x, y):
     """Trapezoidal rule integration."""
-    return np.trapz(y, x=x)
+    return np.trapezoid(y, x=x)
 
 def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     """
