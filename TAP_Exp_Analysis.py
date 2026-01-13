@@ -262,10 +262,10 @@ if uploaded_file:
                     baseline_offset_flux = st.session_state.get('baseline_offset_flux', 0)
                     baseline_offset_raw = st.session_state.get('baseline_offset_raw', 0)
                     if apply_yaxis_correction:
-                        st.success("Y-Axis Correction: ON", icon="✓")
+                        st.success("Y-Axis Correction: ON")
                         st.caption(f"Offset: `{baseline_offset_raw:.2e}` (raw) | `{baseline_offset_flux:.2e}` nmol/s")
                     else:
-                        st.warning("Y-Axis Correction: OFF", icon="⚠")
+                        st.warning("Y-Axis Correction: OFF")
                 
                 st.divider()
                 
