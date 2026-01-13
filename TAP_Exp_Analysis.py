@@ -195,7 +195,7 @@ if uploaded_file:
             st.divider()
             col_toggle_main, col_info_main = st.columns([1, 3])
             with col_toggle_main:
-                apply_yaxis_correction = st.toggle("Global Y-Axis Correction", value=True, help="Subtracts the minimum value of this AMU dataset from all pulses.")
+                apply_yaxis_correction = st.toggle("Y-Axis Correction", value=True, help="Subtracts the minimum value of this AMU dataset from all pulses.")
             with col_info_main:
                 if apply_yaxis_correction:
                     st.success(f"Y-Axis Correction: **ON** (Offset: `{baseline_offset_raw:.2e}` raw | `{baseline_offset_flux:.2e}` nmol/s)")
