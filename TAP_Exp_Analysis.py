@@ -63,12 +63,15 @@ def get_t_p(time_vector, response_vector, t_delay=0):
     max_index = np.argmax(response_vector)
     return time_vector[max_index] - t_delay
 
-def area_under_curve(x, y):
-    """Trapezoidal rule integration with y-axis correction (baseline shift)."""
-    y_corrected = y - np.min(y)  # Shift so minimum is at 0
-    return np.trapezoid(y_corrected, x=x)
+def area_under_curve(x, y, apply_correction=True):
+    """Trapezoidal rule integration with optional y-axis correction (baseline shift)."""
+    if apply_correction:
+        y_corrected = y - np.min(y)  # Shift so minimum is at 0
+        return np.trapezoid(y_corrected, x=x)
+    else:
+        return np.trapezoid(y, x=x)
 
-def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
+def validate_knudsen_criteria(t, F_exit_segment, delay_time=0, apply_yaxis_correction=True):
     """
     Calculates Knudsen criteria parameters for a specific data segment.
     Ref: User Jupyter Notebook
@@ -83,7 +86,7 @@ def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     t_p_val = get_t_p(t_list, f_list, delay_time)
     
     # 2. Area under the curve (M0)
-    Mo_avg = area_under_curve(t_list, f_list)
+    Mo_avg = area_under_curve(t_list, f_list, apply_correction=apply_yaxis_correction)
     
     # 3. Peak max value (Raw Flux)
     F_peak = np.max(f_list)
@@ -194,13 +197,33 @@ if uploaded_file:
             with tab1:
                 st.subheader(f"Pulse Responses (Mass {meta_dict.get(f'AMU {selected_group}', 'Unknown')})")
                 
+                # Calculate baseline offset for this AMU (minimum across all pulses)
+                all_pulse_data = df_proc[pulse_cols].values.flatten()
+                baseline_offset_flux = np.min(all_pulse_data)  # nmol/s (converted)
+                baseline_offset_raw = baseline_offset_flux / conversion_factor  # Raw MS intensity
+                
+                # Y-Axis Correction Toggle
+                col_pulse_sel, col_toggle = st.columns([3, 1])
+                with col_pulse_sel:
+                    pulses_to_show = st.multiselect("Select Pulses to Visualize", pulse_cols, default=pulse_cols)
+                with col_toggle:
+                    apply_yaxis_correction = st.toggle("Y-Axis Correction", value=True, key="yaxis_toggle")
+                    st.caption(f"Offset: `{baseline_offset_raw:.2e}` (raw) | `{baseline_offset_flux:.2e}` nmol/s")
+                
+                # Store in session state for use in Analysis tab
+                st.session_state['baseline_offset_flux'] = baseline_offset_flux
+                st.session_state['baseline_offset_raw'] = baseline_offset_raw
+                st.session_state['apply_yaxis_correction'] = apply_yaxis_correction
+                
                 fig = go.Figure()
-                pulses_to_show = st.multiselect("Select Pulses to Visualize", pulse_cols, default=pulse_cols)
-
                 for pulse in pulses_to_show:
+                    y_data = df_proc[pulse]
+                    if apply_yaxis_correction:
+                        y_data = y_data - baseline_offset_flux  # Shift so minimum is 0
+                    
                     fig.add_trace(go.Scatter(
                         x=df_proc[time_col_name],
-                        y=df_proc[pulse],
+                        y=y_data,
                         mode='lines',
                         name=f"Pulse {pulse}",
                         line=dict(width=1.5)
@@ -208,19 +231,18 @@ if uploaded_file:
 
                 fig.update_layout(
                     xaxis_title="Time (s)",
-                    yaxis_title="Exit Flow (nmol/s)",
+                    yaxis_title="Exit Flow (nmol/s)" + (" [corrected]" if apply_yaxis_correction else ""),
                     template="plotly_white",
                     hovermode="x unified",
                     height=600
                 )
                 st.plotly_chart(fig, use_container_width=True)
-                st.caption("ℹ️ **Y-Axis Correction Applied:** M0 is calculated after shifting the baseline so that the minimum signal value equals zero.")
 
             with tab2:
                 # --- Multi-Peak Configuration ---
                 st.subheader("Peak Detection Settings")
                 
-                col_cfg1, col_cfg2 = st.columns([1, 3])
+                col_cfg1, col_cfg2, col_cfg3 = st.columns([1, 2, 1])
                 with col_cfg1:
                     n_peaks = st.number_input("Number of Peaks per Pulse", min_value=1, value=1, step=1)
                 
@@ -233,6 +255,17 @@ if uploaded_file:
                             def_val = 0.1 if i == 0 else 0.1 + (i * 1.0)
                             val = st.number_input(f"Delay {i+1}", value=def_val, step=0.1, format="%.2f", key=f"d_{i}")
                             sorted_delays.append(val)
+                
+                with col_cfg3:
+                    # Read toggle state from Plots tab (stored in session_state)
+                    apply_yaxis_correction = st.session_state.get('apply_yaxis_correction', True)
+                    baseline_offset_flux = st.session_state.get('baseline_offset_flux', 0)
+                    baseline_offset_raw = st.session_state.get('baseline_offset_raw', 0)
+                    if apply_yaxis_correction:
+                        st.success("Y-Axis Correction: ON", icon="✓")
+                        st.caption(f"Offset: `{baseline_offset_raw:.2e}` (raw) | `{baseline_offset_flux:.2e}` nmol/s")
+                    else:
+                        st.warning("Y-Axis Correction: OFF", icon="⚠")
                 
                 st.divider()
                 
@@ -256,7 +289,7 @@ if uploaded_file:
                         t_segment = time_vector[mask]
                         y_segment = current_pulse_data[mask]
                         
-                        stats = validate_knudsen_criteria(t_segment, y_segment, delay_time=start_delay)
+                        stats = validate_knudsen_criteria(t_segment, y_segment, delay_time=start_delay, apply_yaxis_correction=apply_yaxis_correction)
                         
                         stats['Pulse'] = pulse
                         stats['Peak_Num'] = i + 1
