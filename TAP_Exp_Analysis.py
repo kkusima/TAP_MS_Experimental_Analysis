@@ -64,8 +64,9 @@ def get_t_p(time_vector, response_vector, t_delay=0):
     return time_vector[max_index] - t_delay
 
 def area_under_curve(x, y):
-    """Trapezoidal rule integration."""
-    return np.trapezoid(y, x=x)
+    """Trapezoidal rule integration with y-axis correction (baseline shift)."""
+    y_corrected = y - np.min(y)  # Shift so minimum is at 0
+    return np.trapezoid(y_corrected, x=x)
 
 def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     """
@@ -213,6 +214,7 @@ if uploaded_file:
                     height=600
                 )
                 st.plotly_chart(fig, use_container_width=True)
+                st.caption("ℹ️ **Y-Axis Correction Applied:** M0 is calculated after shifting the baseline so that the minimum signal value equals zero.")
 
             with tab2:
                 # --- Multi-Peak Configuration ---
