@@ -136,7 +136,7 @@ if uploaded_file:
     # 1. SELECT AMU
     col_sel, col_info = st.columns([1, 3])
     with col_sel:
-        idx = data_groups.index('2') if '2' in data_groups else 0
+        idx = data_groups.index('1') if '1' in data_groups else 0
         selected_group = st.selectbox("Select AMU Group", data_groups, index=idx)
     
     if selected_group:
@@ -182,13 +182,23 @@ if uploaded_file:
             df_proc = df_raw.iloc[1:-1].copy()
             df_proc[time_col_name] = pd.to_numeric(df_proc[time_col_name], errors='coerce')
             
+            # Create a dataframe for RAW signals (no conversion)
+            df_proc_raw = df_proc.copy()
+
             # Apply Conversion
             for c in pulse_cols:
-                df_proc[c] = pd.to_numeric(df_proc[c], errors='coerce') * conversion_factor
+                # Convert to numeric first
+                val_numeric = pd.to_numeric(df_proc[c], errors='coerce')
+                
+                # Store raw numeric value in df_proc_raw
+                df_proc_raw[c] = val_numeric
+                
+                # Store converted value in df_proc
+                df_proc[c] = val_numeric * conversion_factor
             
             # --- GLOBAL BASELINE CALCULATION & Y-AXIS CORRECTION ---
             st.divider()
-            st.subheader("Y-Axis Correction Settings")
+            st.subheader("Baseline Correction Settings")
             
             correction_method = st.selectbox(
                 "Correction Method",
@@ -248,7 +258,7 @@ if uploaded_file:
             tab1, tab2, tab3 = st.tabs(["📈 Interactive Plots", "📊 Analysis Summary", "💾 Metadata & Export"])
 
             with tab1:
-                st.subheader(f"Pulse Responses (Mass {meta_dict.get(f'AMU {selected_group}', 'Unknown')})")
+                st.subheader(f"Pulse Response Flux Profiles (Mass {meta_dict.get(f'AMU {selected_group}', 'Unknown')})")
                 
                 # Pulse Selection
                 pulses_to_show = st.multiselect("Select Pulses to Visualize", pulse_cols, default=pulse_cols)
@@ -275,6 +285,46 @@ if uploaded_file:
                     height=600
                 )
                 st.plotly_chart(fig, use_container_width=True)
+
+                # --- RAW SIGNAL PLOT & EXPORT ---
+                st.divider()
+                st.subheader(f"Raw MS Signal (Mass {meta_dict.get(f'AMU {selected_group}', 'Unknown')})")
+                
+                fig_raw = go.Figure()
+                for pulse in pulses_to_show:
+                    # Raw data from processing (no conversion factor)
+                    y_raw = df_proc_raw[pulse]
+                    
+                    fig_raw.add_trace(go.Scatter(
+                        x=df_proc_raw[time_col_name],
+                        y=y_raw,
+                        mode='lines',
+                        name=f"Pulse {pulse} (Raw)",
+                        line=dict(width=1.5) 
+                    ))
+
+                fig_raw.update_layout(
+                    xaxis_title="Time (s)",
+                    yaxis_title="Raw Signal (Intensity)",
+                    template="plotly_white",
+                    hovermode="x unified",
+                    height=500
+                )
+                st.plotly_chart(fig_raw, use_container_width=True)
+                
+                # Excel Export logic
+                if st.button("Prepare Raw Data for Download"):
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        df_proc_raw.to_excel(writer, index=False, sheet_name=f'Raw_AMU_{selected_group}')
+                    excel_data = output.getvalue()
+                    
+                    st.download_button(
+                        label="📥 Download Raw Data (.xlsx)",
+                        data=excel_data,
+                        file_name=f"TAP_Raw_AMU_{meta_dict.get(f'AMU {selected_group}', 'Unknown')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
             with tab2:
                 # --- Multi-Peak Configuration ---
@@ -372,8 +422,11 @@ if uploaded_file:
                         st.info("No metadata found.")
 
                 st.divider()
-                st.subheader("Full Preprocessed Data (Flux)")
-                st.dataframe(df_proc, use_container_width=True)
+                st.subheader("Full Processed Data (Flux)")
+                
+                # Format pulse columns to display scientific notation to avoid showing zeros
+                format_columns = {col: "{:.4e}" for col in pulse_cols}
+                st.dataframe(df_proc.style.format(format_columns), use_container_width=True)
                 
                 col_d1, col_d2 = st.columns(2)
                 
@@ -382,7 +435,7 @@ if uploaded_file:
                     st.download_button(
                         "📥 Download Processed Data (CSV)",
                         csv_full,
-                        f"tap_full_data_amu_{selected_group}.csv",
+                        f"tap_full_data_amu_{meta_dict.get(f'AMU {selected_group}', 'Unknown')}.csv",
                         "text/csv",
                         key='download_full_csv'
                     )
@@ -396,9 +449,9 @@ if uploaded_file:
                             pd.DataFrame(list(meta_dict.items()), columns=["Item", "Value"]).to_excel(writer, sheet_name="Metadata", index=False)
                     
                     st.download_button(
-                        label="📥 Download Full Data (Excel .xlsx)",
+                        label="📥 Download Processed Data (Excel .xlsx)",
                         data=buffer,
-                        file_name=f"tap_data_amu_{selected_group}.xlsx",
+                        file_name=f"tap_data_amu_{meta_dict.get(f'AMU {selected_group}', 'Unknown')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
 
