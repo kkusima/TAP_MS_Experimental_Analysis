@@ -65,7 +65,7 @@ def get_t_p(time_vector, response_vector, t_delay=0):
 
 def area_under_curve(x, y):
     """Trapezoidal rule integration of the provided signal."""
-    return np.trapezoid(y, x=x)
+    return np.trapz(y, x=x)
 
 def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     """
@@ -186,21 +186,63 @@ if uploaded_file:
             for c in pulse_cols:
                 df_proc[c] = pd.to_numeric(df_proc[c], errors='coerce') * conversion_factor
             
-            # --- GLOBAL BASELINE CALCULATION ---
-            # Calculate baseline offset for this AMU (minimum across all pulses)
-            all_pulse_data = df_proc[pulse_cols].values.flatten()
-            baseline_offset_flux = np.min(all_pulse_data)  # nmol/s (converted)
-            baseline_offset_raw = baseline_offset_flux / conversion_factor  # Raw MS intensity
-
+            # --- GLOBAL BASELINE CALCULATION & Y-AXIS CORRECTION ---
             st.divider()
-            col_toggle_main, col_info_main = st.columns([1, 3])
-            with col_toggle_main:
-                apply_yaxis_correction = st.toggle("Y-Axis Correction", value=True, help="Subtracts the minimum value of this AMU dataset from all pulses.")
-            with col_info_main:
-                if apply_yaxis_correction:
-                    st.success(f"Y-Axis Correction: **ON** (Offset: `{baseline_offset_raw:.2e}` raw | `{baseline_offset_flux:.2e}` nmol/s)")
+            st.subheader("Y-Axis Correction Settings")
+            
+            correction_method = st.selectbox(
+                "Correction Method",
+                ["No correction", "Absolute AMU minimum", "Time range average", "Custom correction value"],
+                index=1,
+                help="Select how to correct the Y-axis baseline."
+            )
+            
+            all_pulse_data = df_proc[pulse_cols].values.flatten()
+            baseline_offset_flux = 0.0
+            
+            if correction_method == "No correction":
+                baseline_offset_flux = 0.0
+                apply_yaxis_correction = False
+                st.markdown("Showing **raw results** (no correction applied).")
+
+            elif correction_method == "Absolute AMU minimum":
+                baseline_offset_flux = np.min(all_pulse_data)
+                baseline_offset_raw = baseline_offset_flux / conversion_factor
+                apply_yaxis_correction = True
+                st.success(f"Subtracting Absolute Minimum: `{baseline_offset_raw:.4e}` (Raw) | `{baseline_offset_flux:.4e}` (Flux)")
+
+            elif correction_method == "Time range average":
+                t_min = float(df_proc[time_col_name].min())
+                t_max = float(df_proc[time_col_name].max())
+                
+                c1, c2 = st.columns(2)
+                # Ensure default values are within range
+                def_start = max(t_min, 0.01)
+                def_end = min(t_max, 0.09)
+                
+                t_start_avg = c1.number_input("Avg Start Time (s)", min_value=t_min, max_value=t_max, value=def_start, step=0.01, format="%.3f")
+                t_end_avg = c2.number_input("Avg End Time (s)", min_value=t_min, max_value=t_max, value=def_end, step=0.01, format="%.3f")
+                
+                # Filter based on time range
+                mask_map = (df_proc[time_col_name] >= t_start_avg) & (df_proc[time_col_name] <= t_end_avg)
+                
+                if mask_map.any():
+                    # Calculate mean of all pulses in this window
+                    subset_data = df_proc.loc[mask_map, pulse_cols].values.flatten()
+                    baseline_offset_flux = np.mean(subset_data)
+                    baseline_offset_raw = baseline_offset_flux / conversion_factor
+                    apply_yaxis_correction = True
+                    st.success(f"Subtracting Average ({t_start_avg}-{t_end_avg}s): `{baseline_offset_raw:.4e}` (Raw)")
                 else:
-                    st.warning("Y-Axis Correction: **OFF**")
+                    st.warning("No data found in specified time range.")
+                    apply_yaxis_correction = False
+
+            elif correction_method == "Custom correction value":
+                custom_val = st.number_input("Custom Offset Value (Raw intensity to subtract)", value=-0.03, step=0.01, format="%.4f")
+                baseline_offset_flux = custom_val * conversion_factor
+                baseline_offset_raw = custom_val
+                apply_yaxis_correction = True
+                st.success(f"Subtracting Custom Value: `{baseline_offset_raw}` (Raw)")
 
             # --- TABS ---
             tab1, tab2, tab3 = st.tabs(["📈 Interactive Plots", "📊 Analysis Summary", "💾 Metadata & Export"])
