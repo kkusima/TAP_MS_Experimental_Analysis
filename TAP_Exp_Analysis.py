@@ -418,7 +418,6 @@ if uploaded_file:
 
             with tab2:
                 # --- Analysis Loop ---
-                # --- Analysis Loop ---
                 results = []
                 time_vector = df_proc[time_col_name].values
                 sorted_delays.sort()
