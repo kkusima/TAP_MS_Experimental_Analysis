@@ -5,6 +5,10 @@ import numpy as np
 import plotly.graph_objects as go
 import io
 
+# Set Pandas option to allow rendering large styled dataframes
+# The error reported was for ~2.3M cells, so we set a safe limit of 5M.
+pd.set_option("styler.render.max_elements", 5000000)
+
 # --- Page Configuration ---
 st.set_page_config(
     page_title="TAP Reactor Experimental Analysis",
@@ -64,8 +68,12 @@ def get_t_p(time_vector, response_vector, t_delay=0):
     return time_vector[max_index] - t_delay
 
 def area_under_curve(x, y):
-    """Trapezoidal rule integration of the provided signal."""
-    return np.trapz(y, x=x)
+    """Numerical integration of the provided signal."""
+    # Use np.trapezoid (modern replacement for np.trapz)
+    if hasattr(np, 'trapezoid'):
+        return np.trapezoid(y, x=x)
+    else:
+        return np.trapz(y, x=x)
 
 def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     """
@@ -113,13 +121,11 @@ st.title("TAP Reactor Experiment Analysis")
 
 # --- Sidebar ---
 with st.sidebar:
-    st.header("1. Upload Data")
+    st.header("Upload Data")
     uploaded_file = st.file_uploader("Upload .tdms File", type=["tdms"])
     
     st.divider()
-    st.header("2. Global Settings")
-    default_mom = 4.8674e-8
-    moles_conv = st.number_input("Moles to Momentum Conv", value=default_mom, format="%.5e")
+   
 
 # --- Main Logic ---
 
@@ -133,6 +139,16 @@ if uploaded_file:
     all_groups = [g.name for g in tdms_file.groups()]
     data_groups = [g for g in all_groups if g not in ['Meta Data', 'Secondary Data']]
     
+    # --- Session State Reset on New File ---
+    file_id = f"{uploaded_file.name}_{uploaded_file.size}"
+    if "current_file_id" not in st.session_state or st.session_state.current_file_id != file_id:
+        st.session_state.current_file_id = file_id
+        # Clear all peak-related and calibration/baseline dynamic keys
+        for k in list(st.session_state.keys()):
+            if any(k.startswith(prefix) for prefix in ["d_global_", "c_global_", "cal_amu_", "bs_start_", "bs_end_"]) or k == "n_peaks_val":
+                del st.session_state[k]
+    
+    
     # 1. SELECT AMU
     col_sel, col_info = st.columns([1, 3])
     with col_sel:
@@ -145,21 +161,21 @@ if uploaded_file:
         col_cal1, col_cal2 = st.columns([1, 3])
         
         with col_cal1:
-            # MOVED HERE per request
             default_cal = 0.557839
+            cal_key = f"cal_amu_{selected_group}"
+            if cal_key not in st.session_state:
+                st.session_state[cal_key] = default_cal
+            
             calibration_factor = st.number_input(
                 f"Calibration Factor (AMU {selected_group})", 
-                value=default_cal, 
-                format="%.6f"
+                format="%.6f",
+                key=cal_key
             )
         
-        # Calculate Effective Conversion
-        conversion_factor = calibration_factor * moles_conv
-        
         with col_cal2:
-            st.info(f"**Effective Conversion Factor:** `{conversion_factor:.4e}` (Flux = Intensity × Cal × MomConv)")
+            st.info(f"**Calibration Multiplier:** `{calibration_factor:.4f}` for AMU {selected_group}. Pulse-specific Intensity -> Flux conversion factors will be multiplied by this value.")
 
-        # 3. DATA PROCESSING
+        # 3. DATA PROCESSING INITIALIZATION
         df_raw, error = get_group_data(tdms_file, selected_group)
         
         if error:
@@ -178,82 +194,158 @@ if uploaded_file:
             except:
                 pass
 
-            # Preprocess: Slice (remove edges) & Convert
-            df_proc = df_raw.iloc[1:-1].copy()
-            df_proc[time_col_name] = pd.to_numeric(df_proc[time_col_name], errors='coerce')
-            
-            # Create a dataframe for RAW signals (no conversion)
-            df_proc_raw = df_proc.copy()
-
-            # Apply Conversion
+            # Preprocess: Slice (remove edges)
+            df_proc_raw = df_raw.iloc[1:-1].copy()
+            df_proc_raw[time_col_name] = pd.to_numeric(df_proc_raw[time_col_name], errors='coerce')
             for c in pulse_cols:
-                # Convert to numeric first
-                val_numeric = pd.to_numeric(df_proc[c], errors='coerce')
-                
-                # Store raw numeric value in df_proc_raw
-                df_proc_raw[c] = val_numeric
-                
-                # Store converted value in df_proc
-                df_proc[c] = val_numeric * conversion_factor
-            
-            # --- GLOBAL BASELINE CALCULATION & Y-AXIS CORRECTION ---
-            st.divider()
+                df_proc_raw[c] = pd.to_numeric(df_proc_raw[c], errors='coerce')
+
+            # --- BASELINE CORRECTION SETTINGS (MOVED UP) ---
+            st.markdown("---")
             st.subheader("Baseline Correction Settings")
             
             correction_method = st.selectbox(
                 "Correction Method",
-                ["No correction", "Absolute AMU minimum", "Time range average", "Custom correction value"],
+                ["No correction", "Time range average", "Absolute AMU minimum", "Custom correction value"],
                 index=1,
-                help="Select how to correct the Y-axis baseline."
+                help="Select how to correct the Y-axis baseline *before* conversion to flux."
             )
             
-            all_pulse_data = df_proc[pulse_cols].values.flatten()
-            baseline_offset_flux = 0.0
+            # Use raw data for baseline determination
+            raw_intensity_data = df_proc_raw[pulse_cols].values.flatten()
+            baseline_offset_raw = 0.0
             
             if correction_method == "No correction":
-                baseline_offset_flux = 0.0
-                apply_yaxis_correction = False
-                st.markdown("Showing **raw results** (no correction applied).")
+                baseline_offset_raw = 0.0
+                apply_baseline = False
+                st.markdown("Using **raw intensity** as is.")
 
             elif correction_method == "Absolute AMU minimum":
-                baseline_offset_flux = np.min(all_pulse_data)
-                baseline_offset_raw = baseline_offset_flux / conversion_factor
-                apply_yaxis_correction = True
-                st.success(f"Subtracting Absolute Minimum: `{baseline_offset_raw:.4e}` (Raw) | `{baseline_offset_flux:.4e}` (Flux)")
+                baseline_offset_raw = np.min(raw_intensity_data)
+                apply_baseline = True
+                st.success(f"Subtracting Raw Intensity Minimum: `{baseline_offset_raw:.4e}`")
 
             elif correction_method == "Time range average":
-                t_min = float(df_proc[time_col_name].min())
-                t_max = float(df_proc[time_col_name].max())
+                t_min = float(df_proc_raw[time_col_name].min())
+                t_max = float(df_proc_raw[time_col_name].max())
                 
-                c1, c2 = st.columns(2)
-                # Ensure default values are within range
+                c_bl1, c_bl2 = st.columns(2)
                 def_start = max(t_min, 0.01)
                 def_end = min(t_max, 0.09)
                 
-                t_start_avg = c1.number_input("Avg Start Time (s)", min_value=t_min, max_value=t_max, value=def_start, step=0.01, format="%.3f")
-                t_end_avg = c2.number_input("Avg End Time (s)", min_value=t_min, max_value=t_max, value=def_end, step=0.01, format="%.3f")
+                bs_start_key = f"bs_start_{selected_group}"
+                bs_end_key = f"bs_end_{selected_group}"
                 
-                # Filter based on time range
-                mask_map = (df_proc[time_col_name] >= t_start_avg) & (df_proc[time_col_name] <= t_end_avg)
+                if bs_start_key not in st.session_state:
+                    st.session_state[bs_start_key] = float(def_start)
+                if bs_end_key not in st.session_state:
+                    st.session_state[bs_end_key] = float(def_end)
+
+                t_start_avg = c_bl1.number_input("Avg Start Time (s)", min_value=t_min, max_value=t_max, step=0.01, format="%.3f", key=bs_start_key)
+                t_end_avg = c_bl2.number_input("Avg End Time (s)", min_value=t_min, max_value=t_max, step=0.01, format="%.3f", key=bs_end_key)
+                
+                mask_map = (df_proc_raw[time_col_name] >= t_start_avg) & (df_proc_raw[time_col_name] <= t_end_avg)
                 
                 if mask_map.any():
-                    # Calculate mean of all pulses in this window
-                    subset_data = df_proc.loc[mask_map, pulse_cols].values.flatten()
-                    baseline_offset_flux = np.mean(subset_data)
-                    baseline_offset_raw = baseline_offset_flux / conversion_factor
-                    apply_yaxis_correction = True
-                    st.success(f"Subtracting Average ({t_start_avg}-{t_end_avg}s): `{baseline_offset_raw:.4e}` (Raw)")
+                    subset_data = df_proc_raw.loc[mask_map, pulse_cols].values.flatten()
+                    baseline_offset_raw = np.mean(subset_data)
+                    apply_baseline = True
+                    st.success(f"Subtracting Average Raw Intensity ({t_start_avg}-{t_end_avg}s): `{baseline_offset_raw:.4e}`")
                 else:
                     st.warning("No data found in specified time range.")
-                    apply_yaxis_correction = False
+                    apply_baseline = False
 
             elif correction_method == "Custom correction value":
-                custom_val = st.number_input("Custom Offset Value (Raw intensity to subtract)", value=-0.03, step=0.01, format="%.4f")
-                baseline_offset_flux = custom_val * conversion_factor
-                baseline_offset_raw = custom_val
-                apply_yaxis_correction = True
-                st.success(f"Subtracting Custom Value: `{baseline_offset_raw}` (Raw)")
+                custom_val_key = f"custom_bl_{selected_group}"
+                if custom_val_key not in st.session_state:
+                    st.session_state[custom_val_key] = -0.03
+                
+                baseline_offset_raw = st.number_input("Custom Raw Intensity Offset", step=0.01, format="%.4f", key=custom_val_key)
+                apply_baseline = True
+                st.success(f"Subtracting Custom Raw Value: `{baseline_offset_raw}`")
 
+            # --- PEAK DETECTION SETTINGS ---
+            st.markdown("---")
+            st.subheader("Peak Detection Settings")
+            
+            # Extract delays from metadata
+            meta_delays = []
+            for i in range(1, 5):
+                key = f"Delay Time {i}"
+                val = meta_dict.get(key, 0)
+                try:
+                    val_float = float(val)
+                    if val_float > 0:
+                        meta_delays.append(val_float)
+                except (ValueError, TypeError):
+                    continue
+            
+            def_n_peaks = len(meta_delays) if meta_delays else 1
+            
+            col_cfg1, col_cfg2 = st.columns([1, 3])
+            with col_cfg1:
+                if "n_peaks_val" not in st.session_state:
+                    st.session_state.n_peaks_val = def_n_peaks
+                n_peaks = st.number_input("Number of Peaks per Pulse", min_value=1, step=1, key="n_peaks_val")
+                default_mom = 4.8674e-8
+            
+            peak_configs = []
+            with col_cfg2:
+                st.write("**Pulse Start Times (s) & Conversion Factors (nmol/s per unit intensity):**")
+                for i in range(n_peaks):
+                    if i < len(meta_delays):
+                        def_d = float(meta_delays[i])
+                    else:
+                        def_d = float(0.1 if i == 0 else 0.1 + (i * 1.0))
+                    
+                    d_key = f"d_global_{i}"
+                    c_key = f"c_global_{i}"
+                    
+                    if d_key not in st.session_state:
+                        st.session_state[d_key] = def_d
+                    if c_key not in st.session_state:
+                        st.session_state[c_key] = default_mom
+                    
+                    c_p1, c_p2 = st.columns(2)
+                    with c_p1:
+                        d_val = st.number_input(f"Delay {i+1}", step=0.1, format="%.2f", key=d_key)
+                    with c_p2:
+                        c_val = st.number_input(f"Intensity -> Flux Conversion {i+1}", format="%.5e", key=c_key)
+                    
+                    peak_configs.append({'delay': d_val, 'conv': c_val})
+            
+            peak_configs.sort(key=lambda x: x['delay'])
+            sorted_delays = [p['delay'] for p in peak_configs]
+
+            # --- APPLY CORRECTION AND CONVERSION ---
+            df_proc = df_proc_raw.copy()
+            
+            for c in pulse_cols:
+                # 1. Apply Baseline Correction to RAW
+                raw_vals = df_proc_raw[c].values
+                corrected_raw = raw_vals - baseline_offset_raw if apply_baseline else raw_vals
+                
+                # 2. Apply Piecewise Conversion to CORRECTED RAW
+                flux_column = np.zeros_like(corrected_raw)
+                times = df_proc_raw[time_col_name].values
+                
+                for i, config in enumerate(peak_configs):
+                    # Start of segment:
+                    # For the first peak, start from the very beginning of the data (times[0])
+                    # so that baseline noise before the peak is converted and visible.
+                    t_start = times[0] if i == 0 else config['delay']
+                    
+                    if i < len(peak_configs) - 1:
+                        t_end = peak_configs[i+1]['delay']
+                    else:
+                        t_end = times[-1] + 0.1
+                    
+                    mask = (times >= t_start) & (times < t_end)
+                    eff_conv = config['conv'] * calibration_factor
+                    flux_column[mask] = corrected_raw[mask] * eff_conv
+                
+                df_proc[c] = flux_column
+            
             # --- TABS ---
             tab1, tab2, tab3 = st.tabs(["📈 Interactive Plots", "📊 Analysis Summary", "💾 Metadata & Export"])
 
@@ -266,8 +358,6 @@ if uploaded_file:
                 fig = go.Figure()
                 for pulse in pulses_to_show:
                     y_data = df_proc[pulse]
-                    if apply_yaxis_correction:
-                        y_data = y_data - baseline_offset_flux  # Shift so minimum is 0
                     
                     fig.add_trace(go.Scatter(
                         x=df_proc[time_col_name],
@@ -279,7 +369,7 @@ if uploaded_file:
 
                 fig.update_layout(
                     xaxis_title="Time (s)",
-                    yaxis_title="Exit Flow (nmol/s)" + (" [corrected]" if apply_yaxis_correction else ""),
+                    yaxis_title="Exit Flow (nmol/s)" + (" [corrected]" if apply_baseline else ""),
                     template="plotly_white",
                     hovermode="x unified",
                     height=600
@@ -327,25 +417,7 @@ if uploaded_file:
                     )
 
             with tab2:
-                # --- Multi-Peak Configuration ---
-                st.subheader("Peak Detection Settings")
-                
-                col_cfg1, col_cfg2, col_cfg3 = st.columns([1, 2, 1])
-                with col_cfg1:
-                    n_peaks = st.number_input("Number of Peaks per Pulse", min_value=1, value=1, step=1)
-                
-                sorted_delays = []
-                with col_cfg2:
-                    st.write("**Specify Start/Delay Times (s) in chronological order:**")
-                    cols = st.columns(n_peaks)
-                    for i in range(n_peaks):
-                        with cols[i]:
-                            def_val = 0.1 if i == 0 else 0.1 + (i * 1.0)
-                            val = st.number_input(f"Delay {i+1}", value=def_val, step=0.1, format="%.2f", key=f"d_{i}")
-                            sorted_delays.append(val)
-                
-                st.divider()
-                
+                # --- Analysis Loop ---
                 # --- Analysis Loop ---
                 results = []
                 time_vector = df_proc[time_col_name].values
@@ -365,9 +437,6 @@ if uploaded_file:
                         mask = (time_vector >= t_start) & (time_vector <= t_end)
                         t_segment = time_vector[mask]
                         y_segment = current_pulse_data[mask]
-                        
-                        if apply_yaxis_correction:
-                            y_segment = y_segment - baseline_offset_flux
                         
                         stats = validate_knudsen_criteria(t_segment, y_segment, delay_time=start_delay)
                         
