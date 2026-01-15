@@ -119,13 +119,8 @@ def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
 
 st.title("TAP Reactor Experiment Analysis")
 
-# --- Sidebar ---
-with st.sidebar:
-    st.header("Upload Data")
-    uploaded_file = st.file_uploader("Upload .tdms File", type=["tdms"])
-    
-    st.divider()
-   
+# File Upload on Main Page
+uploaded_file = st.file_uploader("Upload .tdms File", type=["tdms"])
 
 # --- Main Logic ---
 
@@ -524,4 +519,4 @@ if uploaded_file:
                     )
 
 else:
-    st.info("👋 Please upload a .tdms file to begin.")
+    st.info("📤 Please upload a .tdms file to begin.")
