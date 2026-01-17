@@ -5,8 +5,7 @@ import numpy as np
 import plotly.graph_objects as go
 import io
 
-# Set Pandas option to allow rendering large styled dataframes
-# The error reported was for ~2.3M cells, so we set a safe limit of 5M.
+# Setting Pandas option to allow rendering large styled dataframes
 pd.set_option("styler.render.max_elements", 5000000)
 
 # --- Page Configuration ---
@@ -58,7 +57,7 @@ def get_group_data(tdms_file, group_name):
     df = pd.DataFrame(data)
     return df, None
 
-# --- CORE LOGIC (Based on Notebook) ---
+# --- CORE LOGIC ---
 
 def get_t_p(time_vector, response_vector, t_delay=0):
     """Calculates peak time (tp) relative to delay."""
@@ -69,7 +68,6 @@ def get_t_p(time_vector, response_vector, t_delay=0):
 
 def area_under_curve(x, y):
     """Numerical integration of the provided signal."""
-    # Use np.trapezoid (modern replacement for np.trapz)
     if hasattr(np, 'trapezoid'):
         return np.trapezoid(y, x=x)
     else:
@@ -78,7 +76,6 @@ def area_under_curve(x, y):
 def validate_knudsen_criteria(t, F_exit_segment, delay_time=0):
     """
     Calculates Knudsen criteria parameters for a specific data segment.
-    Ref: User Jupyter Notebook
     """
     t_list = np.array(t)
     f_list = np.array(F_exit_segment)
@@ -195,7 +192,7 @@ if uploaded_file:
             for c in pulse_cols:
                 df_proc_raw[c] = pd.to_numeric(df_proc_raw[c], errors='coerce')
 
-            # --- BASELINE CORRECTION SETTINGS (MOVED UP) ---
+            # --- BASELINE CORRECTION SETTINGS ---
             st.markdown("---")
             st.subheader("Baseline Correction Settings")
             
@@ -312,7 +309,7 @@ if uploaded_file:
             peak_configs.sort(key=lambda x: x['delay'])
             sorted_delays = [p['delay'] for p in peak_configs]
 
-            # --- APPLY CORRECTION AND CONVERSION ---
+            # --- APPLY BASELINE CORRECTION THEN UNIT CONVERSION ---
             df_proc = df_proc_raw.copy()
             
             for c in pulse_cols:
