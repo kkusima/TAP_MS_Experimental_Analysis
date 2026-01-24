@@ -4,6 +4,8 @@
   <img src="https://static.streamlit.io/badges/streamlit_badge_black_white.svg" alt="Streamlit App" width="250" height="150"/>
 </a>
 
+## [Link to Wiki](https://github.com/kkusima/TAP_MS_Experimental_Analysis/wiki)
+
 ## Overview
 This Python application uses Streamlit to process and analyze experimental data from Temporal Analysis of Products (TAP) reactors. It reads raw National Instruments `.tdms` files, converts mass spectrometry signals into molar flow rates, and performs moment-based kinetic analysis.
 
